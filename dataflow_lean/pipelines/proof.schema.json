@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "proof": {
+      "type": "string",
+      "description": "Lean tactic block after := by, without an outer by"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Optional short notes about the proposal"
+    }
+  },
+  "required": ["proof", "notes"],
+  "additionalProperties": false
+}

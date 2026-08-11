@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.venv/
+.env
+.DS_Store
+
+# Benchmark checkouts, caches, generated workspaces, and model traces.
+third_party/
+artifacts/
+cache_*/
+workspaces/
+*.jsonl.tmp

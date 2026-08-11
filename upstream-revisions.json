@@ -1,0 +1,16 @@
+{
+  "repositories": {
+    "DataFlow": {
+      "url": "https://github.com/OpenDCAI/DataFlow",
+      "commit_sha": "cefe26bbe5c9d9a00343073a8cedb36b7c8dbb8f"
+    },
+    "M2F": {
+      "url": "https://github.com/optsuite/M2F",
+      "commit_sha": "5b28d01322b671566e9aa5233df12c99457a19c1"
+    },
+    "FATE-H": {
+      "url": "https://github.com/frenzymath/FATE-H",
+      "commit_sha": "17967b3118082adfba7c5a5fc03b5f4a53717b59"
+    }
+  }
+}
