@@ -89,9 +89,9 @@ def test_snapshot_rolls_back_on_exception(tmp_path):
 def test_verirefine_requires_strict_lexicographic_improvement(tmp_path):
     baseline = Verification(False, 1, 2, 3, "", 0)
     same = Verification(False, 1, 2, 3, "", 0)
-    result, accepted = VeriRefine(lambda v: Objective(v.global_errors, v.holes)).attempt(
+    result, candidate, accepted, _ = VeriRefine(lambda v: Objective(v.global_errors, v.holes)).attempt(
         tmp_path, baseline, lambda: None, lambda: same)
-    assert not accepted and result is baseline
+    assert not accepted and result is baseline and candidate is same
 
 
 def test_stage2_plan_patch_verify_and_signature_freeze(tmp_path):

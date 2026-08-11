@@ -123,10 +123,24 @@ class LeanBackend:
                             output, round(time.monotonic() - started, 3))
 
     def goal_state(self, project: Path, target: str, line: int, column: int = 1) -> str:
-        """Query a goal when Lean exposes `lake env lean --stdin`; diagnostics are a portable fallback."""
-        result = self.verify(project, target)
-        relevant = [x for x in result.output.splitlines() if f":{line}:" in x]
-        return "\n".join(relevant[-30:]) or result.output[-6000:]
+        """Compile a temporary instrumented module with `trace_state` at the target hole."""
+        source = (project / target).read_text(encoding="utf-8")
+        lines = source.splitlines()
+        index = max(0, min(line - 1, len(lines) - 1))
+        match = re.search(r"\b(?:sorry|admit)\b", lean_code_only(lines[index]))
+        if not match:
+            return self.verify(project, target).output[-6000:]
+        indent = lines[index][:len(lines[index]) - len(lines[index].lstrip())]
+        lines.insert(index, indent + "trace_state")
+        query = project / "M2FGoalQuery.lean"
+        query.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        try:
+            self.calls += 1
+            proc = subprocess.run(["lake", "env", "lean", query.name], cwd=project, text=True,
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=self.timeout)
+            return proc.stdout[-10000:]
+        finally:
+            query.unlink(missing_ok=True)
 
 
 def declaration_prefix(source: str) -> str:

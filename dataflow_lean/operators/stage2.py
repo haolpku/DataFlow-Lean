@@ -63,7 +63,13 @@ class ProofRepairOperator(OperatorABC):
                             if ".lake" not in p.parts and p.name not in {"lakefile.lean"}
                             and not (p.parent == project and any(project.glob(f"{p.stem}/**/*.lean")))]
             current = self.backend.verify_files(project, module_files)
+            feedback = current.output
             trace, prior_plan = [], ""
+            # Preserve an uncommitted proof frontier separately from the last
+            # compiling workspace. A no-hole candidate with one compiler error is
+            # valuable FixCompileError input even though it cannot be promoted.
+            draft_files: dict[str, str] = {}
+            draft_rank = (current.holes, current.global_errors)
             refine = VeriRefine(lambda v: Objective(v.global_errors, v.holes))
             for planning_round in range(1, self.budget.planning_rounds + 1):
                 inventory = holes(project)
@@ -81,34 +87,57 @@ class ProofRepairOperator(OperatorABC):
                     f"Hole: {focus}\nGoal/diagnostics:\n{goal}\nMathlib retrieval:\n{retrieval}\nPrior plan:\n{prior_plan}\nSource:\n{source}")
                 prior_plan = plan_response.text
                 for executor_attempt in range(1, self.budget.executor_attempts + 1):
+                    files_payload = []
+                    for path in project.rglob("*.lean"):
+                        relative = str(path.relative_to(project))
+                        files_payload.append({"path": relative,
+                                              "content": draft_files.get(relative,
+                                                                         path.read_text(encoding="utf-8"))})
                     patch_response = self.executor.generate(
                         "You are M2F ProposeProofPatch/FixCompileError. Return changed Lean files as JSON. "
                         "Do not change declaration signatures; do not add axioms, unsafe, sorry or admit. "
                         "Use diagnostics to make the smallest useful patch. Do not run shell, tools, or Lean; the "
                         "pipeline is the only verifier.",
-                        f"Plan:\n{prior_plan}\nDiagnostics/goal:\n{current.output[-10000:]}\nRetrieval:\n{retrieval}\n"
-                        "Files:\n" + json.dumps([{"path": str(p.relative_to(project)), "content": p.read_text(encoding="utf-8")}
-                                                  for p in project.rglob("*.lean")], ensure_ascii=False),
+                        f"Plan:\n{prior_plan}\nDiagnostics/goal:\n{feedback[-10000:]}\nRetrieval:\n{retrieval}\n"
+                        "Files:\n" + json.dumps(files_payload, ensure_ascii=False),
                         schema=FILES_SCHEMA)
                     patch = json_object(patch_response.text)["files"]
 
                     def mutate():
+                        if draft_files:
+                            apply_files(project, [{"path": path, "content": content}
+                                                  for path, content in draft_files.items()])
                         apply_files(project, patch)
                         if not signatures_equal(lean_signatures(project), frozen):
                             raise ValueError("Stage 2 attempted to change a frozen declaration signature")
 
                     try:
-                        candidate, accepted = refine.attempt(project, current, mutate,
-                                                             lambda: self.backend.verify_files(project, module_files))
+                        effective, candidate, accepted, candidate_files = refine.attempt(
+                            project, current, mutate, lambda: self.backend.verify_files(project, module_files))
                     except ValueError as exc:
-                        candidate, accepted = current, False
+                        effective, candidate, accepted, candidate_files = current, current, False, {}
                         error = str(exc)
                     else:
                         error = None
-                    current = candidate
+                    current = effective
+                    feedback = candidate.output
+                    candidate_rank = (candidate.holes, candidate.global_errors)
+                    retained_as_draft = False
+                    if accepted:
+                        draft_files = {}
+                        draft_rank = (current.holes, current.global_errors)
+                    elif candidate_files and candidate_rank < draft_rank:
+                        draft_files = candidate_files
+                        draft_rank = candidate_rank
+                        retained_as_draft = True
                     trace.append({"planning_round": planning_round, "executor_attempt": executor_attempt,
-                                  "accepted": accepted, "error": error, "objective": {
+                                  "accepted": accepted, "retained_as_draft": retained_as_draft,
+                                  "draft_objective": {"holes": draft_rank[0], "global_errors": draft_rank[1]},
+                                  "error": error, "objective": {
                                       "global_errors": current.global_errors, "holes": current.holes},
+                                  "candidate_objective": {"global_errors": candidate.global_errors,
+                                                          "holes": candidate.holes},
+                                  "candidate_diagnostics": candidate.output[-10000:],
                                   "planner_model": plan_response.model, "executor_model": patch_response.model,
                                   "planner_tokens": plan_response.prompt_tokens + plan_response.completion_tokens,
                                   "executor_tokens": patch_response.prompt_tokens + patch_response.completion_tokens,

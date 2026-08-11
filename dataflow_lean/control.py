@@ -41,11 +41,17 @@ class VeriRefine:
         self.objective = objective
 
     def attempt(self, project: Path, baseline: Verification, mutate: Callable[[], None],
-                verify: Callable[[], Verification]) -> tuple[Verification, bool]:
+                verify: Callable[[], Verification]
+                ) -> tuple[Verification, Verification, bool, dict[str, str]]:
         with ProjectSnapshot(project) as snapshot:
             mutate()
             candidate = verify()
+            candidate_files = {
+                str(path.relative_to(project)): path.read_text(encoding="utf-8")
+                for path in project.rglob("*.lean")
+                if ".lake" not in path.parts
+            }
             accepted = self.objective(candidate) < self.objective(baseline)
             if not accepted:
                 snapshot.restore()
-            return (candidate if accepted else baseline), accepted
+            return (candidate if accepted else baseline), candidate, accepted, candidate_files

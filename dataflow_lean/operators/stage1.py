@@ -120,12 +120,13 @@ class StatementCompilationOperator(OperatorABC):
                         {"path": str(p.relative_to(self.project_root)), "content": p.read_text(encoding="utf-8")}
                         for p in self.project_root.rglob("*.lean")], ensure_ascii=False), schema=FILES_SCHEMA)
                 patch = json_object(repair.text)["files"]
-                candidate, accepted = refine.attempt(
+                effective, candidate, accepted, _ = refine.attempt(
                     self.project_root, current, lambda: apply_files(self.project_root, patch),
                     lambda: self.backend.verify_project(self.project_root))
-                current = candidate
+                current = effective
                 trace.append({"round": round_no, "action": "FixCompileError", "accepted": accepted,
-                              "verification": current.asdict(), "model": repair.model})
+                              "verification": current.asdict(), "candidate_verification": candidate.asdict(),
+                              "model": repair.model})
             return {output_key: {"project_root": str(self.project_root), "compiled": current.exit_code == 0,
                                  "verification": current.asdict(), "signatures": lean_signatures(self.project_root),
                                  "trace": trace, "provenance": {str(x["id"]): x.get("provenance") for x in row[input_items_key]}}}
