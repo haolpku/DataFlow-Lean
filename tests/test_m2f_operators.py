@@ -49,7 +49,7 @@ class FakeLeanBackend:
 def test_real_operator_names_are_registered():
     for name in ("NormalizeBookOperator", "StatementCompilationOperator", "ProofRepairOperator",
                  "LeanAuditOperator", "FATEHWorkspaceOperator"):
-        assert name in OPERATOR_REGISTRY
+        assert OPERATOR_REGISTRY.get(name).__name__ == name
 
 
 def test_signature_inventory_uses_qualified_names(tmp_path):
