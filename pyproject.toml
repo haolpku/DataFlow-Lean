@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dataflow-lean"
-version = "0.1.0"
-description = "Verifier-in-the-loop Lean 4 data generation and FATE-H evaluation pipeline."
+version = "0.2.0"
+description = "A complete DataFlow-native reimplementation of the M2F document-to-Lean pipeline."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "Apache-2.0" }
@@ -13,11 +13,13 @@ authors = [{ name = "DataFlow-Lean contributors" }]
 dependencies = []
 
 [project.optional-dependencies]
-dataflow = ["open-dataflow"]
+dataflow = ["open-dataflow>=1.0.10,<2"]
+pdf = ["open-dataflow[pdf2vqa,flash-mineru]>=1.0.10,<2"]
 test = ["pytest>=8,<9"]
 
 [project.scripts]
 dataflow-lean-fateh = "dataflow_lean.pipelines.fateh_pipeline:main"
+dataflow-lean-m2f-fateh = "dataflow_lean.pipelines.fateh_m2f_pipeline:main"
 
 [tool.setuptools.packages.find]
 include = ["dataflow_lean*"]

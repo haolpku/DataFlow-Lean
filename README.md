@@ -1,99 +1,158 @@
 # DataFlow-Lean
 
-DataFlow-Lean is a verifier-in-the-loop Lean 4 data-generation and evaluation
-pipeline. Its first runnable pipeline is a paper-inspired reimplementation of
-the M2F proof-repair stage evaluated on FATE-H.
+DataFlow-Lean is a DataFlow-native reimplementation of the complete M2F
+document-to-Lean algorithm. It keeps OpenDCAI DataFlow's optimized book
+extraction intact and adds the formalization control plane after its VQA output.
 
-The repository follows the packaging and production layout used by
-[DataFlow-MemTensor](https://github.com/haolpku/DataFlow-MemTensor), while
-keeping the core benchmark runner dependency-light. OpenDCAI DataFlow is an
-optional dependency for upstream PDF/VQA book extraction.
-
-## Pipeline
+## Complete graph
 
 ```text
-FATE-H inventory
-  -> isolated Lean workspace
-  -> structured proof proposal
-  -> independent Lean verifier
-  -> compiler diagnostics
-  -> repair (up to N attempts)
-  -> JSONL checkpoints + pass@k / PSR metrics
+Official DataFlow optimized PDF/VQA extraction
+  PDF merge → Flash-MinerU → layout conversion → chunked VQA → parse/merge
+  ↓ vqa_pair + messages + image/source paths
+NormalizeBook → AtomicMathBlock + dependency DAG + provenance
+  ↓
+Blueprint generation → independent blueprint verification
+  ↓
+M2F Stage 1
+  GenSkeleton → VerifyProj → localized FixCompileError → accept/revert
+  ↓ frozen declaration signatures + independent statement alignment (SCC)
+M2F Stage 2
+  hole inventory → Plan/Replan → GoalState + Mathlib retrieval
+  → ProposeProofPatch/FixCompileError → VerifyProj → accept/revert
+  ↓
+lake build → sorry/admit/axiom/unsafe scan → #print axioms → provenance audit
 ```
 
-A task passes only when:
+The iterative stages use the paper's lexicographic VeriRefine objectives:
 
-- its theorem prefix through the first `:= by` is unchanged;
-- the candidate contains no `sorry`, `admit`, new `axiom`, or `unsafe` escape hatch;
-- `lake env lean FATEH/<id>.lean` exits successfully.
+- Stage 1: `(global compile errors, localized compile errors)`;
+- Stage 2: `(global compile errors, remaining holes)`.
 
-The proposer is read-only and cannot run Lean. The pipeline installs each
-proposal and performs exactly one auditable verifier call per attempt.
+A rejected patch is physically rolled back. Stage 2 also hashes all declaration
+signatures and rejects any proof patch that changes them. Default upper bounds
+match M2F: 21 planning rounds and 10 executor attempts per plan.
 
-## Install
+## Why book extraction is not reimplemented
 
-Python 3.9+, Lean via `elan`, and the Codex CLI are required for a real run.
+`OptimizedPDFBookToLeanPipeline` accepts the exact operator instances from
+DataFlow's
+[optimized VQA extraction recipe](https://opendcai.github.io/DataFlow-Doc/zh/guide/vqa_extract_optimized/):
+`PDF_Merger`, a configured `FileOrURLToMarkdownConverterFlash`,
+`MinerU2LLMInputOperator`, `ChunkedPromptedGenerator`, `LLMOutputParser`,
+`QA_Merger`, and `VQAFormatter`. Its first seven steps are the upstream graph;
+the M2F operators then continue on the same `FileStorage`.
 
-```bash
-python -m pip install -e .
-git clone https://github.com/frenzymath/FATE-H third_party/FATE-H
-cd third_party/FATE-H
-lake update
-lake exe cache get
-cd ../..
+If extraction has already completed, use `M2FFromExtractedPipeline` on the
+resulting JSONL. The adapter consumes `vqa_pair`, while retaining `messages`,
+image paths, merged Markdown paths, page information, and original text as
+provenance.
+
+```python
+from dataflow.utils.storage import FileStorage
+from dataflow_lean.pipelines import M2FFromExtractedPipeline
+from dataflow_lean.providers import OpenAICompatibleProvider
+
+storage = FileStorage(
+    first_entry_file_name="cache/vqa_extract_output.jsonl",
+    cache_path="artifacts/book_run",
+    file_name_prefix="m2f",
+    cache_type="jsonl",
+)
+generator = OpenAICompatibleProvider(
+    base_url="http://127.0.0.1:4100/v1",
+    model="your-generation-model",
+    api_key_env="M2F_API_KEY",
+)
+reviewer = OpenAICompatibleProvider(
+    base_url="http://127.0.0.1:4100/v1",
+    model="your-independent-review-model",
+    api_key_env="M2F_API_KEY",
+)
+pipeline = M2FFromExtractedPipeline(
+    storage,
+    blueprint=generator,
+    blueprint_verifier=reviewer,
+    stage1_model=generator,
+    planner=generator,
+    executor=generator,
+    project_root="artifacts/book_project",
+)
+pipeline.compile()
+pipeline.forward()
 ```
 
-## Run
+Secrets are only read from the named environment variable and are never stored
+in prompts, source control, or result records.
 
-Small calibration:
+## FATE-H evaluation
+
+FATE-H bypasses extraction and Stage 1 because its statements are already Lean.
+`FATEHM2FPipeline` creates isolated projects, freezes each theorem signature,
+and runs the complete Stage-2 planner/executor loop and audit as real registered
+DataFlow operators.
 
 ```bash
-dataflow-lean-fateh \
+python -m pip install -e '.[dataflow]'
+
+dataflow-lean-m2f-fateh \
+  --input artifacts/shards/fateh-00.jsonl \
   --fateh-root third_party/FATE-H \
-  --output-root artifacts/fateh_pilot \
-  --ids 1,10,20 \
-  --workers 1 \
-  --attempts 3 \
-  --reasoning-effort medium
+  --output-root artifacts/fateh-00 \
+  --provider codex \
+  --model gpt-5.6-sol \
+  --reasoning-effort high
 ```
 
-Run the complete 100-task benchmark by omitting `--ids`:
+For an OpenAI-compatible gateway use `--provider openai --base-url ... --model
+... --api-key-env M2F_API_KEY`. Separate JSONL shards can run on shared-disk
+machines without two workers writing the same DataFlow step file.
+
+For the supplied shared cluster, first create two disjoint shards, then launch
+one per reachable node (30100 and 30200). The helper fixes Lean 4.28 and uses
+the local mihomo endpoint; each worker must have a distinct output directory.
 
 ```bash
-dataflow-lean-fateh \
-  --fateh-root third_party/FATE-H \
-  --output-root artifacts/fateh_full100 \
-  --workers 3 \
-  --attempts 3 \
-  --reasoning-effort medium
+python scripts/make_fateh_shards.py \
+  /vepfs-mlp2/c20250602/500050/lh/lianghao/FATE-H/FATE-H.json \
+  /vepfs-mlp2/c20250602/500050/lh/lianghao/fateh_shards --shards 2
+
+# Run this on each node with shard 00 or 01 respectively.
+M2F_API_KEY=... scripts/run_remote_shard.sh \
+  /vepfs-mlp2/c20250602/500050/lh/lianghao/fateh_shards/fateh-00-of-02.jsonl \
+  /vepfs-mlp2/c20250602/500050/lh/lianghao/fateh_runs/shard-00 \
+  openai gpt-5.4 http://127.0.0.1:4200/v1
 ```
 
-Completed tasks are checkpointed in `steps/10_results.jsonl`; rerunning the
-same command resumes automatically. Use `--force` only when intentionally
-discarding cached task results.
+The 30300 endpoint was unreachable during setup, so the documented default is
+two shards. Recreate three shards when that endpoint is restored.
 
-## Pilot result
+The earlier three-shot whole-proof baseline remains available as
+`dataflow-lean-fateh`; it is retained for comparison only. Its stratified
+10-task smoke test scored pass@1 10%, pass@2 50%, pass@3 60%. That is not the
+full M2F algorithm and is not a full FATE-H score.
 
-The initial stratified 10-task run achieved pass@1 `10%`, pass@2 `50%`, and
-pass@3 `60%`. See [the report](docs/FATEH_PILOT_20260811.md) and its
-[machine-readable record](docs/FATEH_PILOT_20260811.json). This is a smoke-test
-result, not a full FATE-H score.
+## Metrics and audit artifacts
 
-## Book extraction handoff
+Each DataFlow row retains:
 
-For book-to-Lean generation, use the official DataFlow optimized PDF/VQA
-pipeline to produce normalized records, then pass fields such as `context`,
-`content`, `proof`, and `dependencies` to a statement-generation stage before
-this verifier/repair pipeline. PDF extraction is intentionally kept separate
-from FATE-H scoring so OCR/VLM quality does not contaminate the theorem-proving
-metric.
+- ordered source items, dependency edges and exact source provenance;
+- generated and independently reviewed blueprints;
+- every Stage-1 and Stage-2 proposal, verifier objective and accept/revert bit;
+- frozen signature hashes and semantic statement alignments for SCC/ARR;
+- remaining holes, verifier/model calls, lake-build output and `#print axioms`;
+- forbidden escape-hatch findings.
 
-DataFlow guide:
-https://opendcai.github.io/DataFlow-Doc/zh/guide/vqa_extract_optimized/
+A theorem passes only when the project builds, no hole/escape hatch remains,
+the Stage-1 signatures are unchanged, and the kernel axiom audit succeeds.
 
-## Tests
+## Development
 
 ```bash
 python -m pip install -r requirements-test.lock
 python -m pytest -q
 ```
+
+The lightweight import boundary lets pure control-plane tests run without the
+large PDF extras. Production and integration runs use `open-dataflow>=1.0.10`;
+install `.[pdf]` for the optimized PDF dependencies.
