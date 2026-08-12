@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -38,7 +39,10 @@ class MathlibRetriever:
                        key=lambda x: (-len(x), x))
         if not terms:
             return ""
-        proc = subprocess.run(["rg", "-n", "-m", "2", "|".join(map(re.escape, terms[:8])), str(roots[0])],
+        rg = shutil.which("rg")
+        if rg is None:
+            return "Mathlib retrieval skipped because ripgrep is unavailable."
+        proc = subprocess.run([rg, "-n", "-m", "2", "|".join(map(re.escape, terms[:8])), str(roots[0])],
                               text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         return "\n".join(proc.stdout.splitlines()[:limit])
 
