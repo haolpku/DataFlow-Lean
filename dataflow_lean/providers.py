@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import urllib.request
@@ -87,6 +88,113 @@ class OpenAICompatibleProvider:
         usage = body.get("usage", {})
         return LLMResponse(body["choices"][0]["message"]["content"], self.model,
                            usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0), body)
+
+
+class OpenAIMathlibToolProvider:
+    """OpenAI-compatible agent with a small, read-only Lean/Mathlib tool surface."""
+
+    def __init__(self, base_url: str, model: str, project: Path,
+                 reasoning_effort: str = "medium", api_key_env: str = "OPENAI_API_KEY",
+                 timeout: int = 1800, max_tool_rounds: int = 12):
+        self.url = base_url.rstrip("/") + "/chat/completions"
+        self.model, self.project = model, project
+        self.reasoning_effort = reasoning_effort
+        self.api_key_env, self.timeout = api_key_env, timeout
+        self.max_tool_rounds = max_tool_rounds
+        self.mathlib = project / ".lake" / "packages" / "mathlib" / "Mathlib"
+
+    @staticmethod
+    def _tools(schema: dict | None) -> list[dict]:
+        functions = [
+            {"name": "mathlib_search", "description": "Search Mathlib source with a regex.",
+             "parameters": {"type": "object", "properties": {"query": {"type": "string"}},
+                            "required": ["query"], "additionalProperties": False}},
+            {"name": "read_mathlib", "description": "Read a line range from a Mathlib .lean file.",
+             "parameters": {"type": "object", "properties": {
+                 "path": {"type": "string"}, "start": {"type": "integer"},
+                 "end": {"type": "integer"}}, "required": ["path", "start", "end"],
+                            "additionalProperties": False}},
+            {"name": "lean_check", "description": "Compile a temporary Lean snippet in the target project.",
+             "parameters": {"type": "object", "properties": {"code": {"type": "string"}},
+                            "required": ["code"], "additionalProperties": False}},
+        ]
+        if schema is not None:
+            functions.append({"name": "submit_answer", "description": "Submit the final structured answer.",
+                              "parameters": schema})
+        return [{"type": "function", "function": function} for function in functions]
+
+    def _run_tool(self, name: str, value: dict) -> str:
+        if name == "mathlib_search":
+            rg = shutil.which("rg")
+            if rg is None or not self.mathlib.exists():
+                return "Mathlib search unavailable."
+            proc = subprocess.run([rg, "-n", "-m", "40", "--", str(value["query"]), str(self.mathlib)],
+                                  text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                  timeout=60)
+            return proc.stdout[-20000:] or "No matches."
+        if name == "read_mathlib":
+            supplied = Path(str(value["path"]))
+            path = (supplied if supplied.is_absolute() else self.mathlib / supplied).resolve()
+            if not path.is_relative_to(self.mathlib.resolve()) or path.suffix != ".lean" or not path.is_file():
+                return "Rejected path: only Mathlib .lean files may be read."
+            start, end = max(1, int(value["start"])), min(int(value["end"]), int(value["start"]) + 400)
+            lines = path.read_text(encoding="utf-8").splitlines()
+            return "\n".join(f"{i}: {lines[i - 1]}" for i in range(start, min(end, len(lines)) + 1))
+        if name == "lean_check":
+            with tempfile.NamedTemporaryFile("w", suffix=".lean", prefix="M2FToolQuery-",
+                                             dir=self.project, encoding="utf-8", delete=False) as stream:
+                stream.write(str(value["code"]))
+                query = Path(stream.name)
+            try:
+                proc = subprocess.run(["lake", "env", "lean", query.name], cwd=self.project, text=True,
+                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=180)
+                return f"exit_code={proc.returncode}\n{proc.stdout[-20000:]}"
+            finally:
+                query.unlink(missing_ok=True)
+        return "Unknown or unavailable tool."
+
+    def generate(self, system: str, prompt: str, *, schema: dict | None = None) -> LLMResponse:
+        tools = self._tools(schema)
+        messages: list[dict] = [{"role": "system", "content": system + (
+            "\nUse the controlled tools iteratively to verify exact Mathlib APIs instead of guessing names. "
+            "Do not ask for shell access. " +
+            ("When finished, call submit_answer exactly once." if schema is not None
+             else "When finished, return the plan as text."))},
+                                {"role": "user", "content": prompt}]
+        totals = {"prompt_tokens": 0, "completion_tokens": 0}
+        last_body: dict = {}
+        headers = {"Authorization": "Bearer " + os.environ[self.api_key_env],
+                   "Content-Type": "application/json"}
+        for _ in range(self.max_tool_rounds + 1):
+            payload = {"model": self.model, "max_completion_tokens": 16000,
+                       "reasoning_effort": self.reasoning_effort,
+                       "messages": messages, "tools": tools, "tool_choice": "auto"}
+            request = urllib.request.Request(self.url, json.dumps(payload).encode(), headers)
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                last_body = json.load(response)
+            usage = last_body.get("usage", {})
+            for key in totals:
+                totals[key] += usage.get(key, 0)
+            message = last_body["choices"][0]["message"]
+            calls = message.get("tool_calls", [])
+            for call in calls:
+                if call["function"]["name"] == "submit_answer":
+                    value = json.loads(call["function"]["arguments"])
+                    return LLMResponse(json.dumps(value, ensure_ascii=False), self.model,
+                                       totals["prompt_tokens"], totals["completion_tokens"], last_body)
+            if not calls:
+                return LLMResponse(message.get("content", ""), self.model,
+                                   totals["prompt_tokens"], totals["completion_tokens"], last_body)
+            messages.append(message)
+            for call in calls:
+                function = call["function"]
+                try:
+                    value = json.loads(function.get("arguments", "{}"))
+                    result = self._run_tool(function["name"], value)
+                except Exception as exc:
+                    result = f"Tool error: {type(exc).__name__}: {exc}"
+                messages.append({"role": "tool", "tool_call_id": call["id"], "content": result})
+        raise RuntimeError("OpenAI Mathlib agent exceeded its tool-round budget")
 
 
 class ScriptedProvider:

@@ -9,7 +9,7 @@ from pathlib import Path
 from dataflow_lean.operators.audit import LeanAuditOperator
 from dataflow_lean.operators.fateh import FATEHWorkspaceOperator
 from dataflow_lean.operators.stage2 import ProofRepairOperator
-from dataflow_lean.providers import CodexCLIProvider, OpenAICompatibleProvider
+from dataflow_lean.providers import CodexCLIProvider, OpenAICompatibleProvider, OpenAIMathlibToolProvider
 from dataflow_lean.schema import Budget
 
 
@@ -25,12 +25,17 @@ class MemoryStorage:
         return "memory://next"
 
 
-def run_one(row, fateh_root, output_root, model, reasoning, plans, attempts, base_url):
+def run_one(row, fateh_root, output_root, model, reasoning, plans, attempts, base_url, tool_agent):
     problem_id = int(row["id"])
     storage = MemoryStorage([row])
     FATEHWorkspaceOperator(str(fateh_root), str(output_root / "workspaces")).run(storage)
-    provider = (OpenAICompatibleProvider(base_url, model, timeout=1800) if base_url
-                else CodexCLIProvider(model, reasoning, timeout=1800))
+    project = Path(storage.rows[0]["stage1"]["project_root"])
+    if base_url and tool_agent:
+        provider = OpenAIMathlibToolProvider(base_url, model, project, reasoning, timeout=1800)
+    elif base_url:
+        provider = OpenAICompatibleProvider(base_url, model, timeout=1800)
+    else:
+        provider = CodexCLIProvider(model, reasoning, timeout=1800)
     ProofRepairOperator(provider, provider, Budget(planning_rounds=plans, executor_attempts=attempts)).run(storage)
     if storage.rows[0]["stage2"]["success"]:
         LeanAuditOperator().run(storage)
@@ -51,6 +56,8 @@ def main():
     parser.add_argument("--workers", type=int, default=2)
     parser.add_argument("--model", default="gpt-5.6-sol")
     parser.add_argument("--base-url", help="OpenAI-compatible /v1 endpoint; otherwise use local Codex CLI")
+    parser.add_argument("--tool-agent", action="store_true",
+                        help="Enable controlled Mathlib search/read/Lean-check tool calling")
     parser.add_argument("--reasoning-effort", default="medium")
     parser.add_argument("--planning-rounds", type=int, default=1)
     parser.add_argument("--executor-attempts", type=int, default=3)
@@ -64,7 +71,7 @@ def main():
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as pool:
         futures = [pool.submit(run_one, row, args.fateh_root, args.output_root, args.model,
                                args.reasoning_effort, args.planning_rounds, args.executor_attempts,
-                               args.base_url)
+                               args.base_url, args.tool_agent)
                    for row in rows]
         for future in concurrent.futures.as_completed(futures):
             result = future.result()
