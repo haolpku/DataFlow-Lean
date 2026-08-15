@@ -1,0 +1,4 @@
+interface:
+  display_name: "Adaptive Math PDF Q&A"
+  short_description: "Directly extract textbook mathematics into structured JSON"
+  default_prompt: "Use $adaptive-math-pdf-qa to inspect this mathematics textbook and run the direct visual extraction workflow into source-faithful structured JSON."

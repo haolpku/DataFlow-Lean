@@ -85,6 +85,16 @@ pipeline.forward()
 Secrets are only read from the named environment variable and are never stored
 in prompts, source control, or result records.
 
+## Optional direct PDF extraction skill
+
+The reusable Codex skill in [`skills/adaptive-math-pdf-qa`](skills/adaptive-math-pdf-qa/SKILL.md)
+provides an alternative front end for scanned mathematics books. It defaults to direct VLM page
+parsing with a lightweight inventory, numbering-continuity checks, overlapping high-resolution
+transcription, and targeted gap/conflict retries. The retained MinerU route is explicit opt-in.
+
+The skill emits source-faithful environment JSON and a flattened QA view suitable for adaptation to
+`M2FFromExtractedPipeline`; it does not alter the DataFlow-Lean control-plane implementation.
+
 ## FATE-H evaluation
 
 FATE-H bypasses extraction and Stage 1 because its statements are already Lean.
