@@ -18,15 +18,20 @@
   "inventory_overlap_pages": 2,
   "inventory_zoom": 1.25,
   "inventory_workers": 32,
+  "inventory_split_window_ids": [],
+  "inventory_window_page_overrides": {},
   "extraction_window_pages": 5,
   "extraction_overlap_pages": 1,
   "extraction_zoom": 2.4,
   "extraction_workers": 64,
+  "extraction_window_page_overrides": {},
+  "extraction_extra_windows": [],
   "retry_page_padding": 1,
   "retry_max_pages": 8,
   "retry_zoom": 2.8,
   "retry_workers": 32,
-  "manual_retry_ids": []
+  "manual_retry_ids": [],
+  "retry_focus": {}
 }
 ```
 
@@ -73,3 +78,9 @@ All remote window results are individual JSON checkpoints. Re-run a failed stage
 `--force-stage` to execute only missing files. Use `--force-stage` after changing a prompt/profile or
 when deliberately replacing successful checkpoints. Never delete the entire output directory to
 retry one stage.
+
+If only a few dense windows repeatedly stall, list their IDs in `inventory_split_window_ids`, narrow
+their core pages with `inventory_window_page_overrides` or `extraction_window_page_overrides`, and add
+any uncovered single-page calls through `extraction_extra_windows`. Use `retry_focus` only for
+visually audited targets that need an explicit source boundary; changing one target's focus changes
+only that target's checkpoint hash.

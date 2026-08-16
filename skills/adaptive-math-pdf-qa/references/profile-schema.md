@@ -11,7 +11,7 @@ The profile is the only book-specific control surface. Keep it evidence-based an
   "include_unnumbered_named": false,
   "kinds": [
     "definition", "theorem", "lemma", "proposition", "corollary",
-    "claim", "fact", "example", "exercise", "algorithm", "remark"
+    "conjecture", "claim", "fact", "example", "exercise", "algorithm", "remark"
   ],
   "kind_aliases": {"problem": "exercise"},
   "label_regex": "(?:[0-9]+|[A-Z])(?:\\.[0-9]+)+",
@@ -27,6 +27,10 @@ The profile is the only book-specific control surface. Keep it evidence-based an
   "direct_conflict_similarity": 0.94,
   "strip_terminal_proof_marks": false,
   "exclude_pdf_page_ranges": [],
+  "glossary_page_ranges": [],
+  "glossary_overrides": {},
+  "glossary_content_match_disabled_symbols": [],
+  "resolved_conflict_ids": [],
   "merge_object_groups": [],
   "drop_object_ids": [],
   "inspection_notes": ["Facts observed from rendered pages."],
@@ -54,6 +58,20 @@ The profile is the only book-specific control surface. Keep it evidence-based an
 - `exclude_pdf_page_ranges`: physical PDF page ranges known from visual inspection to contain only
   front matter, indexes, or other out-of-scope material. Do not exclude pages merely because native
   text extraction is empty.
+- `glossary_page_ranges`: physical page ranges containing a printed terminology, abbreviation,
+  notation, or symbol table. Direct mode extracts these pages separately even if they overlap an
+  excluded front/back-matter range, and attaches source-faithful relevant entries as
+  `glossary_context` without modifying the original statement. Leave this empty only after checking
+  that standalone extracted objects remain understandable without the table.
+- `glossary_overrides`: optional, visually verified corrections keyed by the parser's normalized
+  symbol string. Use only to resolve an ambiguous printed glyph or canonicalize an operator
+  (for example, `\\Sigma` to `\\sum`); never add a meaning not present in the printed table.
+- `glossary_content_match_disabled_symbols`: ambiguous or overloaded glossary symbols that must be
+  attached only through the table's printed problem/section labels, never by raw text matching.
+  Use this for symbols such as `P(n)` when different articles define it differently.
+- `resolved_conflict_ids`: source-visually adjudicated IDs whose overlap variants are known to be a
+  faithful shorter/longer rendering of the same text. This suppresses only the conflict alert; the
+  normal complete/longer candidate selection still applies.
 - `merge_object_groups`: visually confirmed inventory fragments that form one inseparable source
   definition/example. Each entry has `target_id` and ordered `source_ids`; targeted retry transcribes
   one combined target and reconciliation removes the subordinate IDs.

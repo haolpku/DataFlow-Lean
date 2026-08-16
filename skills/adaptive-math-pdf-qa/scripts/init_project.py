@@ -12,8 +12,8 @@ from common import write_json
 
 
 KINDS = [
-    "definition", "theorem", "lemma", "proposition", "corollary",
-    "claim", "fact", "example", "exercise", "algorithm", "remark",
+                "definition", "theorem", "lemma", "proposition", "corollary",
+                "conjecture", "claim", "fact", "example", "exercise", "algorithm", "remark",
 ]
 
 
@@ -61,6 +61,7 @@ def main() -> None:
             "direct_conflict_similarity": 0.94,
             "strip_terminal_proof_marks": False,
             "exclude_pdf_page_ranges": [],
+            "glossary_page_ranges": [],
             "merge_object_groups": [],
             "drop_object_ids": [],
             "inspection_notes": [],
@@ -96,6 +97,8 @@ def main() -> None:
                 "retry_max_pages": 8,
                 "retry_zoom": 2.8,
                 "retry_workers": 32,
+                "glossary_zoom": 3.0,
+                "glossary_workers": 4,
                 "manual_retry_ids": []
             },
             "mineru": {
